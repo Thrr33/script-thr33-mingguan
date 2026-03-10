@@ -1,4 +1,4 @@
--- ╔══════════════════════════════════════════════════╗
+-- ╔══════════════════════════════════════════════════╗ valid until 17/3/2026 23:23
 -- ║  Protected Script: thr33-premium-v1.lua           ║
 -- ║  Encrypted on: 2026-03-10 23:19                   ║
 -- ║  DO NOT REDISTRIBUTE - Script is URL-locked      ║
