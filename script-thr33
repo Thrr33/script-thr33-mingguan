@@ -1,1 +1,185 @@
+#!/usr/bin/env python3
+"""
+THR33 Encryptor CLI
+Usage: python encrypt.py <script.lua> <raw_github_key_url>
+Contoh: python encrypt.py myscript.lua https://raw.githubusercontent.com/kamu/repo/main/key.txt
+"""
 
+import sys
+import os
+import random
+import string
+import subprocess
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def xor_encrypt(data: bytes, key: bytes) -> bytes:
+    return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+
+def to_hex(data: bytes) -> str:
+    return data.hex()
+
+def gen_key(length=32) -> str:
+    chars = string.ascii_letters + string.digits + "_"
+    return "THR33_" + "".join(random.choices(chars, k=length))
+
+def git_commit_push(key: str, key_filename: str):
+    """Tulis key.txt lalu auto git add, commit, push."""
+    with open(key_filename, "w") as f:
+        f.write(key + "\n")
+
+    cmds = [
+        ["git", "add", key_filename],
+        ["git", "commit", "-m", "chore: update thr33 key"],
+        ["git", "push"],
+    ]
+    for cmd in cmds:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"[!] Git error di '{' '.join(cmd)}':")
+            print(result.stderr.strip())
+            return False
+    return True
+
+# ── template loader ───────────────────────────────────────────────────────────
+
+LOADER_TEMPLATE = '''\
+-- ============================================================
+--   THR33 Premium V12.0 — Protected Loader
+--   Auto-generated oleh THR33 Encryptor CLI
+--   Key source: {key_url}
+-- ============================================================
+
+local KEY_URL           = "{key_url}"
+local ENCRYPTED_PAYLOAD = "{hex_payload}"
+
+local function fromHex(str)
+    return (str:gsub("..", function(cc)
+        return string.char(tonumber(cc, 16))
+    end))
+end
+
+local function xorDecrypt(data, key)
+    local out = {{}}
+    for i = 1, #data do
+        local b = string.byte(data, i)
+        local k = string.byte(key, ((i - 1) % #key) + 1)
+        table.insert(out, string.char(bit32.bxor(b, k)))
+    end
+    return table.concat(out)
+end
+
+-- Support semua executor: request, http.request, syn.request, game:HttpGet
+local function fetchKey()
+    local raw = nil
+    if request then
+        local ok, res = pcall(request, {{Url=KEY_URL,Method="GET"}})
+        if ok and res and res.Body then raw = res.Body end
+    elseif http and http.request then
+        local ok, res = pcall(http.request, {{Url=KEY_URL,Method="GET"}})
+        if ok and res and res.Body then raw = res.Body end
+    elseif syn and syn.request then
+        local ok, res = pcall(syn.request, {{Url=KEY_URL,Method="GET"}})
+        if ok and res and res.Body then raw = res.Body end
+    elseif game.HttpGet then
+        local ok, res = pcall(function() return game:HttpGet(KEY_URL) end)
+        if ok and res then raw = res end
+    end
+    if raw then return raw:match("^%s*(.-)%s*$") end
+end
+
+-- BOOT
+print("[THR33] Fetching key...")
+local key = fetchKey()
+if not key or key == "" then
+    error("[THR33] ❌ Gagal ambil key. Cek KEY_URL atau koneksi.")
+    return
+end
+
+print("[THR33] Decrypting...")
+local ok2, dec = pcall(xorDecrypt, fromHex(ENCRYPTED_PAYLOAD), key)
+if not ok2 or not dec then
+    error("[THR33] ❌ Key tidak valid.")
+    return
+end
+
+local fn, err = loadstring(dec)
+if not fn then
+    error("[THR33] ❌ Payload corrupt: " .. tostring(err))
+    return
+end
+
+print("[THR33] ✅ OK — menjalankan script...")
+fn()
+'''
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python encrypt.py <script.lua> <raw_github_key_url>")
+        print("Contoh: python encrypt.py myscript.lua https://raw.githubusercontent.com/kamu/repo/main/key.txt")
+        sys.exit(1)
+
+    script_path = sys.argv[1]
+    key_url     = sys.argv[2]
+
+    # Validasi file
+    if not os.path.isfile(script_path):
+        print(f"[!] File tidak ditemukan: {script_path}")
+        sys.exit(1)
+
+    # Baca script
+    with open(script_path, "rb") as f:
+        script_bytes = f.read()
+
+    # Generate key
+    key = gen_key()
+    key_bytes = key.encode()
+
+    # Encrypt
+    encrypted = xor_encrypt(script_bytes, key_bytes)
+    hex_payload = to_hex(encrypted)
+
+    # Generate loader
+    script_name   = os.path.splitext(os.path.basename(script_path))[0]
+    loader_name   = f"{script_name}_loader.lua"
+    key_filename  = "key.txt"
+
+    loader_code = LOADER_TEMPLATE.format(
+        key_url=key_url,
+        hex_payload=hex_payload,
+    )
+
+    with open(loader_name, "w", encoding="utf-8") as f:
+        f.write(loader_code)
+
+    print(f"\n{'='*55}")
+    print(f"  ✅  ENKRIPSI SELESAI")
+    print(f"{'='*55}")
+    print(f"  Script   : {script_path}")
+    print(f"  Key      : {key}")
+    print(f"  Loader   : {loader_name}  ← share ini ke user")
+    print(f"  Key URL  : {key_url}")
+    print(f"{'='*55}")
+
+    # Tanya auto-commit
+    ans = input("\n📤 Auto commit & push key.txt ke GitHub sekarang? (y/n): ").strip().lower()
+    if ans == "y":
+        print("[*] Committing key.txt...")
+        ok = git_commit_push(key, key_filename)
+        if ok:
+            print("✅ key.txt berhasil di-push ke GitHub!")
+        else:
+            print(f"[!] Push gagal. Tulis manual key ini ke {key_filename}:")
+            print(f"    {key}")
+    else:
+        # Tulis key.txt lokal saja
+        with open(key_filename, "w") as f:
+            f.write(key + "\n")
+        print(f"\n📄 key.txt ditulis lokal. Upload manual ke GitHub repo kamu.")
+
+    print(f"\n🎉 Selesai! Share '{loader_name}' ke user.\n")
+
+if __name__ == "__main__":
+    main()
